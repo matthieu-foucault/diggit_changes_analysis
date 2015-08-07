@@ -87,29 +87,36 @@ module ActionsExtractor
 	end
 end
 
-class ChangesAnalysis < ProcessMetricsAnalysis
+class PreviousActions < ProcessMetricsAnalysis
 	include ActionsExtractor
 
 	TIME_PERIOD_SIZE = 3600 * 24 * 30
-	ACTIONS_COL = "actions"
+
+	def actions_col
+		"actions"
+	end
 
 	def run
 		@release_files = get_files_from_db
-		r_0 = @repo.lookup(src_opt["cloc-commit-id"])
+		@renames = {}
+		@num_commits = 0
+		@num_commits_without_action = 0
+
+		extract_actions
+		
+		puts "#{@num_commits} commits, #{@num_commits_without_action} without action"
+	end
+
+	def extract_actions
+		s_0 = @repo.lookup(src_opt["cloc-commit-id"])
 		t_first = @repo.lookup(src_opt["R_first"]).author[:time]
-
-		t_0 = r_0.author[:time]
-
+		t_0 = s_0.author[:time]
+		t_previous_month = t_0 - TIME_PERIOD_SIZE
+		month_num = 1
 
 		walker = Rugged::Walker.new(@repo)
 		walker.sorting(Rugged::SORT_DATE)
-		walker.push(r_0)
-
-		@renames = {}
-		t_previous_month = t_0 - TIME_PERIOD_SIZE
-		month_num = 1
-		@num_commits = 0
-		@num_commits_without_action = 0
+		walker.push(s_0)
 
 		commits = []
 		walker.each do |commit|
@@ -118,17 +125,16 @@ class ChangesAnalysis < ProcessMetricsAnalysis
 			commits << commit if commit.parents.size == 1
 			if t < t_previous_month || t < t_first
 				puts "[#{Time.new}] Month #{month_num}, #{commits.size} commits"
-				m = extract_changes_metrics(commits, month_num)
+				m = extract_commits_actions(commits, month_num)
 				month_num = month_num + 1
 				t_previous_month = t_previous_month - TIME_PERIOD_SIZE
 				commits = []
 			end
 			break if t < t_first
 		end
-		puts "#{@num_commits} commits, #{@num_commits_without_action} without action"
 	end
 
-	def extract_changes_metrics(commits, month_num)
+	def extract_commits_actions(commits, month_num)
 		actions_count = Hash.new(0)
 		commits.each do |commit|
 			commit_has_actions = false
@@ -144,7 +150,7 @@ class ChangesAnalysis < ProcessMetricsAnalysis
 					commit_has_actions = true unless actions.empty?
 					
 					actions.each do |action|
-						key = {author:author, maudule:maudule, kind:action.kind, element:action.element, commit:commit.oid.to_s, file:file, date:commit.author[:time]}
+						key = {developer:author, "module" => maudule, kind:action.kind, element:action.element, commit:commit.oid.to_s, file:file, date:commit.author[:time]}
 						actions_count[key] = actions_count[key] + 1
 					end
 				end	
@@ -155,12 +161,24 @@ class ChangesAnalysis < ProcessMetricsAnalysis
 		
 		entries = []
 		actions_count.each_pair do |key, count|
-			entries << key.merge({count:count, month_num:month_num, source:@source})
+			entries << key.merge({count:count, month_num:month_num, project:@source})
 		end
-		@addons[:db].db[ACTIONS_COL].insert(entries) unless entries.empty?	
+		@addons[:db].db[actions_col].insert(entries) unless entries.empty?	
 	end
 
 	def clean
-		@addons[:db].db[ACTIONS_COL].remove({source:@source})
+		@addons[:db].db[actions_col].remove({project:@source})
 	end
+end
+
+class BugFixesActions < PreviousActions
+
+	def actions_col
+		"bugfixes_actions"
+	end
+
+	def extract_actions
+		extract_commits_actions(src_opt["bug-fix-commits"].map { |c| @repo.lookup(c) },0)
+	end
+
 end
