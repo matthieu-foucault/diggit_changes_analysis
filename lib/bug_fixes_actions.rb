@@ -1,3 +1,5 @@
+require_relative 'previous_actions'
+
 class BugFixesActions < PreviousActions
 	def actions_col
 		"bugfixes_actions"
